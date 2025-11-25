@@ -128,4 +128,4 @@ def get_recs_fast(user_id, k=5):
     # Zera os scores dos itens que o usuário já comprou (para recomendar novidades)
     for estab_id in interacted_estabs:
         if estab_id in estab_to_idx:
-            total_scores[estab_to_idx
+            total_scores[estab_to_idx]
