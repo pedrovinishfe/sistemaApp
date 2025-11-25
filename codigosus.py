@@ -13,16 +13,14 @@ st.set_page_config(page_title="Sistema de Recomendação", layout="wide")
 st.title("📊 Sistema de Recomendação de Pedidos")
 
 # ==============================================================================
-# 1. CARREGAMENTO DOS DADOS
+# 1. CARREGAMENTO DOS DADOS (AGORA TUDO EM PARQUET)
 # ==============================================================================
 @st.cache_data
 def load_data():
     try:
-        # Carrega CSVs menores normalmente
-        df_users = pd.read_csv('base_usuarios.csv')
-        df_estab = pd.read_csv('base_estabelecimentos.csv')
-        
-        # Carrega a base de pedidos em PARQUET (mais rápido e leve)
+        # LENDO TODOS OS ARQUIVOS EM FORMATO PARQUET
+        df_users = pd.read_parquet('base_usuarios.parquet')
+        df_estab = pd.read_parquet('base_estabelecimentos.parquet')
         df_pedidos = pd.read_parquet('base_pedidos.parquet')
         
         return df_users, df_pedidos, df_estab
@@ -30,15 +28,16 @@ def load_data():
         return None, None, e
 
 st.write("--- Iniciando Processamento ---")
+# df_estab_info contém os dados dos estabelecimentos
 df_users, df_pedidos, df_estab_info = load_data()
 
 # Verificação de erro no carregamento
 if df_users is None:
-    st.error(f"ERRO CRÍTICO: Arquivo não encontrado: {df_estab_info}")
-    st.warning("Verifique se o arquivo 'base_pedidos.parquet' está na pasta do GitHub.")
+    st.error(f"ERRO CRÍTICO: Um dos arquivos Parquet não foi encontrado: {df_estab_info}")
+    st.warning("Verifique se você converteu e fez o upload dos arquivos **base_usuarios.parquet**, **base_estabelecimentos.parquet** e **base_pedidos.parquet**.")
     st.stop()
 else:
-    st.success("Arquivos carregados com sucesso!")
+    st.success("Arquivos carregados com sucesso! (Todos em Parquet)")
 
 # ==============================================================================
 # 2. PRÉ-PROCESSAMENTO
@@ -77,7 +76,7 @@ def get_recs(user_id, k=5):
         top_pop = train_data['estabelecimento_id'].value_counts().head(k).index.tolist()
         return top_pop
     
-    # Lógica de similaridade ponderada (LINHA QUE ESTAVA DANDO ERRO CORRIGIDA ABAIXO)
+    # Lógica de similaridade ponderada
     user_history = train_user_item.loc[user_id]
     
     estabs_comprados = user_history[user_history > 0].index.tolist()
