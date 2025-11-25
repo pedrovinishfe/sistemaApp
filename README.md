@@ -7,7 +7,7 @@
 
 ## 🎯 Sobre o Projeto
 
-O Assçai é uma aplicação web desenvolvida para auxiliar pequenas empresas e comerciantes individuais no gerenciamento eficiente de suas operações. O objetivo principal é simplificar o controle de estoque, o cadastro e solução integrada para otimizar a gestão do dia a dia, trazendo exatamente o que o cliente procura.
+O Acessçai é uma aplicação web desenvolvida para auxiliar pequenas empresas e comerciantes individuais no gerenciamento eficiente de suas operações. O objetivo principal é simplificar o controle de estoque, o cadastro e solução integrada para otimizar a gestão do dia a dia, trazendo exatamente o que o cliente procura.
 
 Este sistema visa resolver desafios comuns como:
 *   Falta de controle sobre o inventário de produtos.
