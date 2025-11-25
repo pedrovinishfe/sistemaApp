@@ -5,24 +5,25 @@ import matplotlib.pyplot as plt
 from sklearn.metrics.pairwise import cosine_similarity
 from scipy.sparse import csr_matrix
 from sklearn.model_selection import train_test_split
+import gc # Garbage Collector para limpar memória
 
 # ==============================================================================
 # CONFIGURAÇÃO INICIAL
 # ==============================================================================
 st.set_page_config(page_title="Sistema de Recomendação", layout="wide")
-st.title("📊 Sistema de Recomendação de Pedidos")
+st.title("📊 Sistema de Recomendação de Pedidos (Otimizado)")
 
 # ==============================================================================
-# 1. CARREGAMENTO DOS DADOS (USANDO PARQUET)
+# 1. CARREGAMENTO DOS DADOS (CACHE DE DADOS)
 # ==============================================================================
-@st.cache_data
+@st.cache_data(ttl=3600) # Cache dura 1 hora
 def load_data():
     try:
         # Lê os arquivos Parquet
-        df_users = pd.read_parquet('base_usuarios.parquet')
-        df_estab = pd.read_parquet('base_estabelecimentos.parquet')
-        df_pedidos = pd.read_parquet('base_pedidos.parquet')
-        return df_users, df_pedidos, df_estab
+        df_u = pd.read_parquet('base_usuarios.parquet')
+        df_e = pd.read_parquet('base_estabelecimentos.parquet')
+        df_p = pd.read_parquet('base_pedidos.parquet')
+        return df_u, df_p, df_e
     except Exception as e:
         return None, None, e
 
@@ -33,10 +34,10 @@ if df_users is None:
     st.error(f"ERRO CRÍTICO: Falha ao carregar arquivos. Detalhes: {df_estab_info}")
     st.stop()
 else:
-    st.success("Arquivos carregados com sucesso!")
+    st.toast("Arquivos carregados!", icon="✅")
 
 # ==============================================================================
-# 2. PRÉ-PROCESSAMENTO
+# 2. PRÉ-PROCESSAMENTO RÁPIDO
 # ==============================================================================
 
 # Filtra apenas pedidos entregues
@@ -45,155 +46,86 @@ df_pedidos_validos = df_pedidos[df_pedidos['status_pedido'] == 'ENTREGUE'].copy(
 # Divisão Treino/Teste
 train_data, test_data = train_test_split(df_pedidos_validos, test_size=0.2, random_state=42)
 
-st.write(f"**Dados divididos:** {len(train_data)} pedidos para treino, {len(test_data)} para teste.")
+st.write(f"**Dados:** {len(train_data)} treino | {len(test_data)} teste")
 
 # ==============================================================================
-# 3. PREPARAÇÃO DA MATRIZ (SEM CÁLCULO PESADO IMEDIATO)
+# 3. CONSTRUÇÃO DO MODELO (CACHE DE RECURSO PESADO)
 # ==============================================================================
 
-st.info("Preparando matrizes esparsas...")
-
-# Cria matriz User-Item (Linhas=Usuários, Colunas=Estabelecimentos)
-# Usamos crosstab aqui, mas em bases muito grandes recomenda-se criar a csr_matrix diretamente das coordenadas
-train_user_item = pd.crosstab(train_data['usuario_id'], train_data['estabelecimento_id'])
-train_sparse = csr_matrix(train_user_item.values)
-
-# OTIMIZAÇÃO CRÍTICA: Transposta para calcular similaridade entre ITENS (Estabelecimentos)
-# Isso é necessário para Item-Item CF. 
-item_user_matrix = train_sparse.T 
-
-# NÃO calculamos "cosine_similarity(train_sparse)" globalmente aqui.
-# Isso criaria uma matriz densa gigante que derruba o servidor (Erro EOF).
-
-# ==============================================================================
-# 4. FUNÇÃO DE RECOMENDAÇÃO (CÁLCULO SOB DEMANDA)
-# ==============================================================================
-
-def get_recs_item_item(user_id, k=5):
+@st.cache_resource(show_spinner="Treinando modelo matemático...")
+def build_similarity_matrix(df_train):
     """
-    Gera recomendações baseadas em Item-Item Similarity.
-    Calcula similaridade apenas para os itens que o usuário interagiu, economizando RAM.
+    Constrói a matriz de similaridade e a armazena em cache global.
+    Retorna:
+    - similarity_matrix (Numpy Array float32)
+    - user_item_matrix (DataFrame User x Item para lookup)
     """
+    # 1. Cria Crosstab (User x Item)
+    train_user_item = pd.crosstab(df_train['usuario_id'], df_train['estabelecimento_id'])
+    
+    # 2. Converte para Esparsa e Força FLOAT32 (Economiza 50% de RAM)
+    train_sparse = csr_matrix(train_user_item.values, dtype=np.float32)
+    
+    # 3. Calcula Similaridade de Itens (Transposta)
+    # Atenção: Isso cria uma matriz densa. O float32 é essencial aqui.
+    item_similarity = cosine_similarity(train_sparse.T)
+    
+    # Limpeza de memória imediata
+    gc.collect()
+    
+    return item_similarity, train_user_item
+
+# Chamada da função cacheada
+try:
+    # item_sim_matrix: Matriz Numpy (rápida)
+    # train_ui_df: DataFrame para sabermos quem é quem (índices)
+    item_sim_matrix, train_ui_df = build_similarity_matrix(train_data)
+    
+    # Mapeamento rápido de ID do estabelecimento para índice da matriz (0, 1, 2...)
+    estab_ids = train_ui_df.columns # Lista de IDs de estabelecimentos
+    estab_to_idx = {estab_id: i for i, estab_id in enumerate(estab_ids)}
+    idx_to_estab = {i: estab_id for i, estab_id in enumerate(estab_ids)}
+    
+    st.success("Matriz de similaridade construída e cacheada!")
+
+except Exception as e:
+    st.error(f"Erro de Memória: {e}")
+    st.warning("A base é muito grande. Tente reduzir o histórico de pedidos.")
+    st.stop()
+
+# ==============================================================================
+# 4. FUNÇÃO DE RECOMENDAÇÃO OTIMIZADA
+# ==============================================================================
+
+def get_recs_fast(user_id, k=5):
     # Cold Start
-    if user_id not in train_user_item.index:
+    if user_id not in train_ui_df.index:
         return train_data['estabelecimento_id'].value_counts().head(k).index.tolist()
     
-    # 1. Pega o histórico do usuário (Vetor de 0s e 1s)
-    user_idx = train_user_item.index.get_loc(user_id)
-    user_vector = train_sparse[user_idx, :].toarray().flatten()
+    # Pega o histórico do usuário (linha do dataframe)
+    user_history = train_ui_df.loc[user_id] # Série com 0s e 1s
+    interacted_estabs = user_history[user_history > 0].index.tolist()
     
-    # 2. Identifica itens que o usuário já interagiu (índices das colunas)
-    interacted_items_indices = np.where(user_vector > 0)[0]
-    
-    scores = {}
-    
-    # 3. Calcula similaridade APENAS para os itens relevantes
-    # Em vez de computar uma matriz N x N gigante, calculamos pontualmente
-    if len(interacted_items_indices) > 0:
-        # Calcula similaridade entre todos os itens e os itens que o usuário gostou
-        # Isso ainda pode ser pesado, então usamos o scikit-learn de forma vetorizada se possível
-        # Para economizar memória, limitamos a lógica simplificada:
-        
-        # Computa a similaridade de cosseno entre a matriz de itens e os itens alvo
-        # item_user_matrix é (N_items x N_users)
-        # sub_matrix é (N_interacted x N_users)
-        sub_matrix = item_user_matrix[interacted_items_indices]
-        
-        # Similaridade (N_interacted x N_items) - Muito menor que (N_items x N_items)
-        sim_subset = cosine_similarity(sub_matrix, item_user_matrix)
-        
-        # Soma as similaridades ponderadas pelo histórico (aqui histórico é 1)
-        # axis=0 soma as colunas, resultando em um score para cada item
-        summed_scores = sim_subset.sum(axis=0)
-        
-        # Cria série para facilitar ordenação
-        scores_series = pd.Series(summed_scores, index=train_user_item.columns)
-        
-        # Remove itens já vistos
-        items_seen = train_user_item.columns[interacted_items_indices]
-        scores_series = scores_series.drop(items_seen, errors='ignore')
-        
-        return scores_series.sort_values(ascending=False).head(k).index.tolist()
-    
-    return []
+    if not interacted_estabs:
+        return []
 
-# ==============================================================================
-# 5. AVALIAÇÃO DE DESEMPENHO
-# ==============================================================================
-
-if st.button("Executar Avaliação de Desempenho"):
-    # Reduzimos a amostra para garantir que rode na memória da nuvem
-    sample_size = 100 
+    # Vetor de scores acumulados (inicialmente zeros)
+    # Tamanho igual ao número total de estabelecimentos
+    total_scores = np.zeros(item_sim_matrix.shape[0], dtype=np.float32)
     
-    st.warning(f"Executando avaliação em uma amostra de {sample_size} usuários para evitar sobrecarga de memória...")
-    
-    with st.spinner("Calculando métricas..."):
-        k_list = [3, 5, 10]
-        results = []
-        test_users = test_data['usuario_id'].unique()
-
-        if len(test_users) > sample_size:
-            test_users = np.random.choice(test_users, sample_size, replace=False)
-
-        global_precision = {k: [] for k in k_list}
-        global_recall = {k: [] for k in k_list}
-
-        progress_bar = st.progress(0)
-        
-        for i, user in enumerate(test_users):
-            itens_reais = test_data[test_data['usuario_id'] == user]['estabelecimento_id'].unique()
+    # Para cada item que o usuário comprou
+    for estab_id in interacted_estabs:
+        if estab_id in estab_to_idx:
+            # Pega o índice numérico (0, 1, 2...) desse estabelecimento
+            idx = estab_to_idx[estab_id]
             
-            # Chama a nova função otimizada
-            recs = get_recs_item_item(user, k=max(k_list))
+            # Pega a linha de similaridade desse item na matriz numpy (Muito Rápido)
+            sim_scores = item_sim_matrix[idx]
             
-            for k in k_list:
-                recs_k = recs[:k]
-                acertos = len(set(recs_k) & set(itens_reais))
-                precision = acertos / k
-                recall = acertos / len(itens_reais) if len(itens_reais) > 0 else 0
-                global_precision[k].append(precision)
-                global_recall[k].append(recall)
-            
-            # Atualiza barra de progresso
-            progress_bar.progress((i + 1) / len(test_users))
+            # Soma ao score total (ponderado pelo histórico, que é 1)
+            total_scores += sim_scores
 
-        for k in k_list:
-            results.append({
-                'Top N': k, 
-                'Precision': np.mean(global_precision[k]), 
-                'Recall': np.mean(global_recall[k])
-            })
-
-        df_results = pd.DataFrame(results)
-        
-        st.subheader("Performance do Modelo")
-        st.dataframe(df_results)
-
-        # Gráfico
-        fig, ax = plt.subplots(figsize=(10, 5))
-        x = np.arange(len(df_results))
-        width = 0.35
-
-        ax.bar(x - width/2, df_results['Precision'], width, label='Precision', color='#4285F4')
-        ax.bar(x + width/2, df_results['Recall'], width, label='Recall', color='#34A853')
-
-        ax.set_xlabel('Top N')
-        ax.set_ylabel('Score')
-        ax.set_title('Precisão vs Recall')
-        ax.set_xticks(x)
-        ax.set_xticklabels(df_results['Top N'])
-        ax.legend()
-        ax.grid(axis='y', linestyle='--', alpha=0.5)
-        
-        st.pyplot(fig)
-
-        # Exemplo Prático
-        st.write("---")
-        if len(test_users) > 0:
-            exemplo_user = test_users[0]
-            recs_ids = get_recs_item_item(exemplo_user, k=3)
-            
-            # Busca nomes
-            nomes_recs = df_estab_info[df_estab_info['estabelecimento_id'].isin(recs_ids)]['categoria_estabelecimento'].tolist()
-            
-            st.write(f"Exemplo: Para o usuário **{exemplo_user}**, o modelo sugere: **{nomes_recs}**")
+    # Zera os scores dos itens que o usuário já comprou (para recomendar novidades)
+    for estab_id in interacted_estabs:
+        if estab_id in estab_to_idx:
+            total_scores[estab_to_idx
