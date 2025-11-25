@@ -21,26 +21,24 @@ def load_data():
         df_users = pd.read_csv('base_usuarios.csv')
         df_estab = pd.read_csv('base_estabelecimentos.csv')
         
-        # Carrega a base de pedidos em PARQUET (Mais rápido e leve)
-        # Certifique-se de que o arquivo 'base_pedidos.parquet' está na pasta
+        # --- AQUI ESTAVA O ERRO ---
+        # Agora carregamos o PARQUET em vez do CSV
         df_pedidos = pd.read_parquet('base_pedidos.parquet')
         
         return df_users, df_pedidos, df_estab
     except FileNotFoundError as e:
-        # Retorna o erro específico para ajudar na depuração
         return None, None, e
 
 st.write("--- Iniciando Processamento ---")
-df_users, df_pedidos, df_estab_info = load_data() # mudei nome da var para evitar confusão no merge
+df_users, df_pedidos, df_estab_info = load_data()
 
 # Verificação de erro no carregamento
 if df_users is None:
-    # Se df_estab_info contém um erro (que retornamos no except), mostramos ele
-    st.error(f"ERRO CRÍTICO: Arquivo não encontrado. Detalhes: {df_estab_info}")
-    st.warning("Dica: Verifique se você converteu 'base_pedidos.csv' para 'base_pedidos.parquet' e fez o upload.")
+    st.error(f"ERRO CRÍTICO: Arquivo não encontrado: {df_estab_info}")
+    st.warning("Verifique se o arquivo 'base_pedidos.parquet' está na pasta do GitHub (e não o .csv).")
     st.stop()
 else:
-    st.success("Arquivos carregados com sucesso! (Usando Parquet para pedidos)")
+    st.success("Arquivos carregados com sucesso!")
 
 # ==============================================================================
 # 2. PRÉ-PROCESSAMENTO
@@ -94,7 +92,7 @@ def get_recs(user_id, k=5):
     return scores.sort_values(ascending=False).head(k).index.tolist()
 
 # ==============================================================================
-# 5. AVALIAÇÃO DE DESEMPENHO
+# 5. AVALIAÇÃO DE DESEMPENHO E VISUALIZAÇÃO
 # ==============================================================================
 
 if st.button("Executar Avaliação de Desempenho"):
@@ -103,7 +101,7 @@ if st.button("Executar Avaliação de Desempenho"):
         results = []
         test_users = test_data['usuario_id'].unique()
 
-        # Amostra para performance (se tiver muitos usuários)
+        # Amostra para performance
         if len(test_users) > 500:
             test_users = np.random.choice(test_users, 500, replace=False)
 
@@ -130,10 +128,6 @@ if st.button("Executar Avaliação de Desempenho"):
             })
 
         df_results = pd.DataFrame(results)
-
-        # ==============================================================================
-        # 6. VISUALIZAÇÃO FINAL
-        # ==============================================================================
         
         st.subheader("Performance do Modelo")
         st.dataframe(df_results)
@@ -146,8 +140,8 @@ if st.button("Executar Avaliação de Desempenho"):
         ax.bar(x - width/2, df_results['Precision'], width, label='Precision', color='#4285F4')
         ax.bar(x + width/2, df_results['Recall'], width, label='Recall', color='#34A853')
 
-        ax.set_xlabel('Top N (Quantidade de Recomendações)')
-        ax.set_ylabel('Score (0 a 1)')
+        ax.set_xlabel('Top N')
+        ax.set_ylabel('Score')
         ax.set_title('Precisão vs Recall')
         ax.set_xticks(x)
         ax.set_xticklabels(df_results['Top N'])
@@ -158,17 +152,10 @@ if st.button("Executar Avaliação de Desempenho"):
 
         # Exemplo Prático
         st.write("---")
-        st.subheader("Exemplo de Recomendação")
-        
-        # Garante que temos usuários de teste
         if len(test_users) > 0:
             exemplo_user = test_users[0]
             recs_ids = get_recs(exemplo_user, k=3)
-            
-            # Busca os nomes/categorias no dataframe de estabelecimentos
+            # Verifica se o ID existe na base de estabelecimentos antes de buscar o nome
             nomes_recs = df_estab_info[df_estab_info['estabelecimento_id'].isin(recs_ids)]['categoria_estabelecimento'].tolist()
-
-            st.write(f"Para o usuário **{exemplo_user}**...")
-            st.write(f"O modelo sugere categorias: **{nomes_recs}**")
-        else:
-            st.warning("Não há dados de teste suficientes para gerar um exemplo.")
+            
+            st.write(f"Exemplo: Para o usuário **{exemplo_user}**, o
