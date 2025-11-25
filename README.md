@@ -1,4 +1,4 @@
-# 🚀 Assçcai: Gerenciamento Integrado de Vendas, Clientes e Estoque
+# 🚀 Acessçai: Gerenciamento Integrado de Vendas, Clientes e Estoque
 
 [![GitHub license](https://img.shields.io/github/license/pedrovinishfe/sistemaApp?style=flat-square)](https://github.com/pedrovinishfe/sistemaApp/blob/main/LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/pedrovinishfe/sistemaApp?style=flat-square)](https://github.com/pedrovinishfe/sistemaApp/stargazers)
